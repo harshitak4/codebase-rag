@@ -1,73 +1,178 @@
 import sys
 import os
+from pathlib import Path
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import streamlit as st
-from app.rag_answer import RAGAnswerer
+from app.rag_answer import RAGAnswerer, RAGAnswererFallback
 
 st.set_page_config(
-    page_title="Codebase RAG",
+    page_title="Codebase RAG Assistant",
+    page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-st.title("Codebase RAG Assistant")
-st.caption("Ask questions about your codebase ")
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 2.5rem;
+        font-weight: bold;
+        color: #1f77b4;
+    }
+    .code-chunk {
+        background-color: #f0f2f6;
+        padding: 10px;
+        border-radius: 5px;
+        margin: 10px 0;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown('<p class="main-header">🤖 Codebase RAG Assistant</p>', unsafe_allow_html=True)
+st.caption("Ask questions about your codebase using AI-powered semantic search")
+
+with st.sidebar:
+    st.header("ℹ️ About")
+    st.markdown("""
+    This tool uses **Retrieval-Augmented Generation (RAG)** to answer questions about your codebase.
+    
+    **How it works:**
+    1. Semantic search finds relevant code
+    2. AI analyzes the code
+    3. Generates contextual answers
+    
+    **Requirements:**
+    - Index built from your repo
+    - Ollama running locally
+    """)
+    
+    st.divider()
+    
+    st.header("⚙️ Settings")
+    k_results = st.slider("Number of code chunks to retrieve", 1, 10, 5)
+    show_distances = st.checkbox("Show similarity scores", value=False)
+    
+    st.divider()
+    
+    st.header("📊 Stats")
+    if Path("data/code_index/meta.json").exists():
+        import json
+        with open("data/code_index/meta.json") as f:
+            metadata = json.load(f)
+        st.metric("Indexed Code Chunks", len(metadata))
+        st.metric("Functions", sum(1 for m in metadata if "Function" in m["type"]))
+        st.metric("Classes", sum(1 for m in metadata if "Class" in m["type"]))
+    else:
+        st.warning("No index found. Run `python -m app.build_index` first.")
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 @st.cache_resource
 def load_rag():
-    return RAGAnswerer()
+    """Load RAG system with caching"""
+    try:
+        return RAGAnswerer(), True
+    except (FileNotFoundError, ConnectionError) as e:
+        st.sidebar.error(f"❌ {str(e)}")
+        try:
+            return RAGAnswererFallback(), False
+        except Exception as e2:
+            st.error(f"Failed to initialize: {str(e2)}")
+            st.stop()
 
-rag = load_rag()
-
-question = st.text_area(
-    "💬 Ask a question",
-    placeholder="e.g. How does FAISS work in this project?",
-    height=90
-)
-
-if st.button("🚀 Ask"):
-    if question.strip():
-        with st.spinner("Thinking..."):
-            answer, contexts = rag.answer(question)
-
-        st.session_state.chat_history.append(
-            {
-                "question": question,
-                "answer": answer,
-                "contexts": contexts
-            }
-        )
-    else:
-        st.warning("Please enter a question.")
+try:
+    rag, has_ollama = load_rag()
+    
+    if not has_ollama:
+        st.warning("⚠️ Running in fallback mode. Install Ollama for AI answers.")
+        st.info("👉 Get Ollama: https://ollama.com/download")
+    
+except Exception as e:
+    st.error(f"❌ Failed to load RAG system: {str(e)}")
+    st.info("Make sure you've built an index first:")
+    st.code("python -m app.build_index --github https://github.com/user/repo")
+    st.stop()
 
 st.divider()
-st.subheader("🧵 Chat History")
 
-for i, chat in enumerate(reversed(st.session_state.chat_history), 1):
-    with st.container():
-        st.markdown(f"###  Question {i}")
-        st.markdown(chat["question"])
+question = st.text_area(
+    "💬 Ask a question about the codebase",
+    placeholder="Examples:\n- How does authentication work?\n- Explain the database connection logic\n- What does the UserService class do?",
+    height=100,
+    key="question_input"
+)
 
-        st.markdown("### 🤖 Answer")
-        st.markdown(chat["answer"])
+col1, col2, col3 = st.columns([1, 1, 4])
 
-        with st.expander("📂 Retrieved Code Context"):
-            for j, c in enumerate(chat["contexts"], 1):
-                st.markdown(
-                    f"""
-**{j}. File:** `{c['file']}`  
-**Type:** `{c['type']}`  
-**Name:** `{c['name']}`
-"""
-                )
-                st.code(c["code"], language="python")
+with col1:
+    ask_button = st.button("🚀 Ask", type="primary", use_container_width=True)
 
-        st.divider()
+with col2:
+    if st.button("🗑️ Clear History", use_container_width=True):
+        st.session_state.chat_history = []
+        st.rerun()
+        
+if ask_button:
+    if not question.strip():
+        st.warning("⚠️ Please enter a question")
+    else:
+        with st.spinner("🔍 Searching codebase..."):
+            try:
+                answer, contexts = rag.answer(question, k=k_results)
+                
+                st.session_state.chat_history.append({
+                    "question": question,
+                    "answer": answer,
+                    "contexts": contexts
+                })
+                
+                st.rerun()
+                
+            except Exception as e:
+                st.error(f"❌ Error: {str(e)}")
 
-st.divider() 
-st.caption("Built locally • No cloud calls • Your code stays on your machine")
+if st.session_state.chat_history:
+    st.divider()
+    st.subheader("💬 Chat History")
+    
+    for i, chat in enumerate(reversed(st.session_state.chat_history)):
+        idx = len(st.session_state.chat_history) - i
+        
+        with st.container():
+            st.markdown(f"### 🙋 Question {idx}")
+            st.info(chat["question"])
+            
+            st.markdown("### 🤖 Answer")
+            st.success(chat["answer"])
+            
+            with st.expander(f"📂 View {len(chat['contexts'])} Retrieved Code Snippets"):
+                for j, ctx in enumerate(chat["contexts"], 1):
+                    st.markdown(f"**Snippet {j}**")
+                    
+                    col_a, col_b, col_c = st.columns(3)
+                    col_a.markdown(f"📄 **File:** `{ctx['file']}`")
+                    col_b.markdown(f"🏷️ **Type:** `{ctx['type']}`")
+                    col_c.markdown(f"✨ **Name:** `{ctx['name']}`")
+                    
+                    if show_distances and 'distance' in ctx:
+                        st.caption(f"Similarity score: {ctx['distance']:.4f}")
+                    
+                    st.code(ctx["code"], language="python")
+                    st.divider()
+            
+            st.markdown("---")
+
+else:
+    st.info("👋 Ask a question to get started!")
+
+st.divider()
+col_a, col_b, col_c = st.columns(3)
+with col_a:
+    st.caption("🔒 100% Local • No cloud calls")
+with col_b:
+    st.caption("🚀 Powered by FAISS + Ollama")
+with col_c:
+    st.caption("💾 Your code stays on your machine")
