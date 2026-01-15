@@ -1,13 +1,11 @@
 import sys
 import os
 
-# Allow imports from project root
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import streamlit as st
 from app.rag_answer import RAGAnswerer
 
-# ---------------- PAGE CONFIG ----------------
 st.set_page_config(
     page_title="Codebase RAG",
     layout="wide",
@@ -17,7 +15,6 @@ st.set_page_config(
 st.title("Codebase RAG Assistant")
 st.caption("Ask questions about your codebase ")
 
-# ---------------- SESSION STATE ----------------
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
@@ -27,7 +24,6 @@ def load_rag():
 
 rag = load_rag()
 
-# ---------------- INPUT ----------------
 question = st.text_area(
     "💬 Ask a question",
     placeholder="e.g. How does FAISS work in this project?",
@@ -49,7 +45,6 @@ if st.button("🚀 Ask"):
     else:
         st.warning("Please enter a question.")
 
-# ---------------- CHAT HISTORY ----------------
 st.divider()
 st.subheader("🧵 Chat History")
 
