@@ -2,11 +2,13 @@ import sys
 import os
 from pathlib import Path
 
+# Add parent directory to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import streamlit as st
-from app.rag_answer import RAGAnswerer, RAGAnswererFallback
+from app.rag_answer import RAGAnswerer
 
+# Page config
 st.set_page_config(
     page_title="Codebase RAG Assistant",
     page_icon="🤖",
@@ -14,6 +16,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Custom CSS
 st.markdown("""
 <style>
     .main-header {
@@ -30,9 +33,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Title
 st.markdown('<p class="main-header">🤖 Codebase RAG Assistant</p>', unsafe_allow_html=True)
 st.caption("Ask questions about your codebase using AI-powered semantic search")
 
+# Sidebar
 with st.sidebar:
     st.header("ℹ️ About")
     st.markdown("""
@@ -40,12 +45,12 @@ with st.sidebar:
     
     **How it works:**
     1. Semantic search finds relevant code
-    2. AI analyzes the code
+    2. AI analyzes the code (if available)
     3. Generates contextual answers
     
     **Requirements:**
     - Index built from your repo
-    - Ollama running locally
+    - Ollama running locally (optional)
     """)
     
     st.divider()
@@ -67,37 +72,38 @@ with st.sidebar:
     else:
         st.warning("No index found. Run `python -m app.build_index` first.")
 
+# Initialize session state
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
+# Load RAG system
 @st.cache_resource
 def load_rag():
     """Load RAG system with caching"""
     try:
-        return RAGAnswerer(), True
-    except (FileNotFoundError, ConnectionError) as e:
-        st.sidebar.error(f"❌ {str(e)}")
-        try:
-            return RAGAnswererFallback(), False
-        except Exception as e2:
-            st.error(f"Failed to initialize: {str(e2)}")
-            st.stop()
+        return RAGAnswerer()
+    except FileNotFoundError as e:
+        st.sidebar.error(f"❌ Index not found: {str(e)}")
+        st.error("Please build an index first:")
+        st.code("python -m app.build_index --github https://github.com/user/repo")
+        st.stop()
+    except Exception as e:
+        st.error(f"❌ Failed to load RAG system: {str(e)}")
+        st.stop()
 
 try:
-    rag, has_ollama = load_rag()
-    
-    if not has_ollama:
-        st.warning("⚠️ Running in fallback mode. Install Ollama for AI answers.")
-        st.info("👉 Get Ollama: https://ollama.com/download")
+    rag = load_rag()
     
 except Exception as e:
-    st.error(f"❌ Failed to load RAG system: {str(e)}")
+    st.error(f"❌ Failed to initialize: {str(e)}")
     st.info("Make sure you've built an index first:")
     st.code("python -m app.build_index --github https://github.com/user/repo")
     st.stop()
 
+# Main interface
 st.divider()
 
+# Question input
 question = st.text_area(
     "💬 Ask a question about the codebase",
     placeholder="Examples:\n- How does authentication work?\n- Explain the database connection logic\n- What does the UserService class do?",
@@ -114,7 +120,8 @@ with col2:
     if st.button("🗑️ Clear History", use_container_width=True):
         st.session_state.chat_history = []
         st.rerun()
-        
+
+# Process question
 if ask_button:
     if not question.strip():
         st.warning("⚠️ Please enter a question")
@@ -123,17 +130,20 @@ if ask_button:
             try:
                 answer, contexts = rag.answer(question, k=k_results)
                 
+                # Add to history
                 st.session_state.chat_history.append({
                     "question": question,
                     "answer": answer,
                     "contexts": contexts
                 })
                 
+                # Clear input and rerun
                 st.rerun()
                 
             except Exception as e:
                 st.error(f"❌ Error: {str(e)}")
 
+# Display chat history
 if st.session_state.chat_history:
     st.divider()
     st.subheader("💬 Chat History")
@@ -142,12 +152,15 @@ if st.session_state.chat_history:
         idx = len(st.session_state.chat_history) - i
         
         with st.container():
+            # Question
             st.markdown(f"### 🙋 Question {idx}")
             st.info(chat["question"])
             
+            # Answer
             st.markdown("### 🤖 Answer")
             st.success(chat["answer"])
             
+            # Retrieved contexts
             with st.expander(f"📂 View {len(chat['contexts'])} Retrieved Code Snippets"):
                 for j, ctx in enumerate(chat["contexts"], 1):
                     st.markdown(f"**Snippet {j}**")
@@ -160,6 +173,10 @@ if st.session_state.chat_history:
                     if show_distances and 'distance' in ctx:
                         st.caption(f"Similarity score: {ctx['distance']:.4f}")
                     
+                    # Show docstring if available
+                    if ctx.get('docstring'):
+                        st.markdown(f"**Description:** {ctx['docstring'][:200]}...")
+                    
                     st.code(ctx["code"], language="python")
                     st.divider()
             
@@ -168,11 +185,12 @@ if st.session_state.chat_history:
 else:
     st.info("👋 Ask a question to get started!")
 
+# Footer
 st.divider()
 col_a, col_b, col_c = st.columns(3)
 with col_a:
-    st.caption("🔒 100% Local • No cloud calls")
+    st.caption("• 100% Local • No cloud calls")
 with col_b:
-    st.caption("🚀 Powered by FAISS + Ollama")
+    st.caption("• No cloud calls")
 with col_c:
-    st.caption("💾 Your code stays on your machine")
+    st.caption("• Your code stays on your machine")

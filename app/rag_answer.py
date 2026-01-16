@@ -3,22 +3,13 @@ from typing import Tuple, List, Dict
 from app.vector_store import CodeVectorStore
 
 INDEX_PATH = "data/code_index"
-OLLAMA_URL = "http://localhost:11434/api/generate"
 
 class RAGAnswerer:
     """
-    RAG system for answering questions about codebases using Ollama.
+    Simplified RAG answerer with better error handling
     """
     
-    def __init__(self, index_path: str = INDEX_PATH, model: str = "codellama:7b"):
-        """
-        Initialize RAG answerer.
-        
-        Args:
-            index_path: Path to vector index
-            model: Ollama model name
-        """
-        self.model = model
+    def __init__(self, index_path: str = INDEX_PATH):
         self.store = CodeVectorStore()
         
         try:
@@ -26,120 +17,96 @@ class RAGAnswerer:
             print(f"✅ Loaded index from {index_path}")
         except FileNotFoundError:
             print(f"❌ Index not found at {index_path}")
-            print("Run 'python -m app.build_index' first to create an index")
             raise
         
+        # Check if Ollama is available
+        self.ollama_available = self._check_ollama()
+        
+        if self.ollama_available:
+            print("✅ Ollama is available")
+        else:
+            print("⚠️  Ollama not available - will provide code snippets only")
     
+    def _check_ollama(self) -> bool:
+        """Check if Ollama is running"""
         try:
             response = requests.get("http://localhost:11434/api/tags", timeout=2)
-            if response.status_code == 200:
-                print(f"✅ Ollama connected (model: {model})")
-            else:
-                print("⚠️  Ollama is running but returned unexpected status")
-        except requests.exceptions.RequestException:
-            print("❌ Ollama not running!")
-            print("Start Ollama with: ollama serve")
-            print(f"Then pull model: ollama pull {model}")
-            raise ConnectionError("Ollama is not running")
+            return response.status_code == 200
+        except:
+            return False
     
     def _call_ollama(self, prompt: str) -> str:
-        """
-        Call Ollama API for text generation.
-        
-        Args:
-            prompt: Prompt to send to model
-            
-        Returns:
-            Generated text
-        """
+        """Call Ollama with shorter timeout and simpler prompt"""
         try:
             response = requests.post(
-                OLLAMA_URL,
+                "http://localhost:11434/api/generate",
                 json={
-                    "model": self.model,
+                    "model": "qwen2.5-coder:1.5b",
                     "prompt": prompt,
                     "stream": False,
                     "options": {
                         "temperature": 0.3,
-                        "num_predict": 512
+                        "num_predict": 150,  # Shorter response
+                        "top_p": 0.9
                     }
                 },
-                timeout=60
+                timeout=20  # Shorter timeout
             )
             
             if response.status_code == 200:
                 return response.json()["response"]
             else:
-                return f"Error: Ollama returned status {response.status_code}"
-                
-        except requests.exceptions.Timeout:
-            return "Error: Request timed out. The model might be too slow for this query."
+                return None
+                    
         except Exception as e:
-            return f"Error calling Ollama: {str(e)}"
+            return None
     
     def answer(self, question: str, k: int = 5) -> Tuple[str, List[Dict]]:
         """
-        Answer a question using RAG.
-        
-        Args:
-            question: User's question
-            k: Number of code chunks to retrieve
-            
-        Returns:
-            Tuple of (answer, retrieved_contexts)
+        Answer a question using RAG
         """
-    
+        # Retrieve relevant code
         results = self.store.search(question, k=k)
         
         if not results:
             return "No relevant code found in the index.", []
         
-    
+        # Build simple answer first (fallback)
+        fallback_answer = f"**Found {len(results)} relevant code snippets:**\n\n"
+        for i, r in enumerate(results[:5], 1):
+            fallback_answer += f"{i}. `{r['file']}` - {r['type']} `{r['name']}`\n"
+            if r.get('docstring'):
+                fallback_answer += f"   {r['docstring'][:100]}...\n"
+        
+        # If Ollama not available, return simple summary
+        if not self.ollama_available:
+            fallback_answer += "\n💡 *Start Ollama for AI-generated explanations*"
+            return fallback_answer, results
+        
+        # Build SHORT context (only top 2 results, truncated)
         context_parts = []
-        for i, r in enumerate(results, 1):
+        for i, r in enumerate(results[:2], 1):
+            code_snippet = r['code'][:300] + "..." if len(r['code']) > 300 else r['code']
             context_parts.append(
-                f"[Code Snippet {i}]\n"
-                f"File: {r['file']}\n"
-                f"Type: {r['type']}\n"
-                f"Name: {r['name']}\n"
-                f"```python\n{r['code']}\n```\n"
+                f"[{i}] {r['name']} from {r['file']}\n{code_snippet}"
             )
         
         context = "\n\n".join(context_parts)
         
-        prompt = f"""You are a senior software engineer analyzing a codebase. Answer the user's question based ONLY on the code snippets provided below. Be specific and reference the actual code.
+        # VERY short, direct prompt
+        prompt = f"""Q: {question}
 
-Question: {question}
-
-Code Context:
+Code:
 {context}
 
-Answer (be concise and technical):"""
+A (1-2 sentences):"""
         
-        answer = self._call_ollama(prompt)
+        # Try to get AI answer
+        ai_answer = self._call_ollama(prompt)
         
-        return answer, results
-
-class RAGAnswererFallback:
-    """
-    Fallback RAG answerer that works without Ollama (returns context only).
-    """
-    
-    def __init__(self, index_path: str = INDEX_PATH):
-        self.store = CodeVectorStore()
-        self.store.load(index_path)
-        print("⚠️  Running in fallback mode (no Ollama)")
-    
-    def answer(self, question: str, k: int = 5) -> Tuple[str, List[Dict]]:
-        results = self.store.search(question, k=k)
-        
-        if not results:
-            return "No relevant code found.", []
-        
-        answer = "**Relevant code found:**\n\n"
-        for i, r in enumerate(results, 1):
-            answer += f"{i}. `{r['file']}` - {r['type']} `{r['name']}`\n"
-        
-        answer += "\n💡 *Install Ollama for AI-generated answers*"
-        
-        return answer, results
+        if ai_answer:
+            return ai_answer.strip(), results
+        else:
+            # Use fallback
+            fallback_answer += "\n⚠️ *AI timeout - showing code snippets only*"
+            return fallback_answer, results
