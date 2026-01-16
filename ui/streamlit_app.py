@@ -2,13 +2,11 @@ import sys
 import os
 from pathlib import Path
 
-# Add parent directory to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import streamlit as st
 from app.rag_answer import RAGAnswerer
 
-# Page config
 st.set_page_config(
     page_title="Codebase RAG Assistant",
     page_icon="🤖",
@@ -16,7 +14,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
 st.markdown("""
 <style>
     .main-header {
@@ -33,11 +30,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Title
 st.markdown('<p class="main-header">🤖 Codebase RAG Assistant</p>', unsafe_allow_html=True)
 st.caption("Ask questions about your codebase using AI-powered semantic search")
 
-# Sidebar
 with st.sidebar:
     st.header("ℹ️ About")
     st.markdown("""
@@ -72,11 +67,9 @@ with st.sidebar:
     else:
         st.warning("No index found. Run `python -m app.build_index` first.")
 
-# Initialize session state
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-# Load RAG system
 @st.cache_resource
 def load_rag():
     """Load RAG system with caching"""
@@ -100,10 +93,8 @@ except Exception as e:
     st.code("python -m app.build_index --github https://github.com/user/repo")
     st.stop()
 
-# Main interface
 st.divider()
 
-# Question input
 question = st.text_area(
     "💬 Ask a question about the codebase",
     placeholder="Examples:\n- How does authentication work?\n- Explain the database connection logic\n- What does the UserService class do?",
@@ -121,7 +112,6 @@ with col2:
         st.session_state.chat_history = []
         st.rerun()
 
-# Process question
 if ask_button:
     if not question.strip():
         st.warning("⚠️ Please enter a question")
@@ -137,13 +127,11 @@ if ask_button:
                     "contexts": contexts
                 })
                 
-                # Clear input and rerun
                 st.rerun()
                 
             except Exception as e:
                 st.error(f"❌ Error: {str(e)}")
 
-# Display chat history
 if st.session_state.chat_history:
     st.divider()
     st.subheader("💬 Chat History")
@@ -152,15 +140,12 @@ if st.session_state.chat_history:
         idx = len(st.session_state.chat_history) - i
         
         with st.container():
-            # Question
             st.markdown(f"### 🙋 Question {idx}")
             st.info(chat["question"])
             
-            # Answer
             st.markdown("### 🤖 Answer")
             st.success(chat["answer"])
             
-            # Retrieved contexts
             with st.expander(f"📂 View {len(chat['contexts'])} Retrieved Code Snippets"):
                 for j, ctx in enumerate(chat["contexts"], 1):
                     st.markdown(f"**Snippet {j}**")
@@ -173,7 +158,6 @@ if st.session_state.chat_history:
                     if show_distances and 'distance' in ctx:
                         st.caption(f"Similarity score: {ctx['distance']:.4f}")
                     
-                    # Show docstring if available
                     if ctx.get('docstring'):
                         st.markdown(f"**Description:** {ctx['docstring'][:200]}...")
                     
@@ -185,7 +169,6 @@ if st.session_state.chat_history:
 else:
     st.info("👋 Ask a question to get started!")
 
-# Footer
 st.divider()
 col_a, col_b, col_c = st.columns(3)
 with col_a:
